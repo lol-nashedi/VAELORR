@@ -1,0 +1,1136 @@
+--// VAELOR CATALOG  -  Android + PC (touch friendly, auto-scaling UI)
+local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
+local RS = game:GetService("ReplicatedStorage")
+local LP = Players.LocalPlayer
+local PG = LP:WaitForChild("PlayerGui")
+local Cam = workspace.CurrentCamera
+
+local DB = "https://archonland-f1b03-default-rtdb.asia-southeast1.firebasedatabase.app/"
+local req = (syn and syn.request) or (http and http.request) or http_request
+    or (fluxus and fluxus.request) or (krnl and krnl.request) or request
+local copyFn = setclipboard or toclipboard
+
+local Item = {
+    Username = "N0T_Z0RO100",
+    DisplayName = "一一仁了二二二フ",
+    Role = "SCRIPT CREATOR",
+    Title = "VÆLOR CATALOG",
+    Version = "v1.0",
+}
+
+local alive = true
+local old = PG:FindFirstChild("VaelorAvatarCodes")
+if old then old:Destroy() end
+
+------------------------------------------------------------------ utils
+local smallMap = {a="ᴀ",b="ʙ",c="ᴄ",d="ᴅ",e="ᴇ",f="ꜰ",g="ɢ",h="ʜ",i="ɪ",j="ᴊ",k="ᴋ",l="ʟ",m="ᴍ",n="ɴ",o="ᴏ",p="ᴘ",q="ǫ",r="ʀ",s="s",t="ᴛ",u="ᴜ",v="ᴠ",w="ᴡ",x="x",y="ʏ",z="ᴢ"}
+local function smallCaps(s)
+    local out = ""
+    for i = 1, #s do
+        local ch = s:sub(i, i)
+        out = out .. (smallMap[ch:lower()] or ch)
+    end
+    return out
+end
+
+local function trim(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
+
+local function commas(n)
+    local s = tostring(math.floor(n or 0))
+    local out = ""
+    local c = 0
+    for i = #s, 1, -1 do
+        c += 1
+        out = s:sub(i, i) .. out
+        if c % 3 == 0 and i > 1 then out = "," .. out end
+    end
+    return out
+end
+
+local function countKeys(t)
+    local n = 0
+    if type(t) == "table" then for _ in pairs(t) do n += 1 end end
+    return n
+end
+
+local function today() return os.date("%Y-%m-%d") end
+
+------------------------------------------------------------------ http / firebase
+local function encode(v)
+    local t = type(v)
+    if t == "table" then return HttpService:JSONEncode(v) end
+    if t == "string" then return HttpService:JSONEncode({v}):sub(2, -2) end
+    return tostring(v)
+end
+
+local function http(method, path, body)
+    if not req then return nil end
+    local opts = {Url = DB .. path .. ".json", Method = method}
+    if body ~= nil then
+        opts.Headers = {["Content-Type"] = "application/json"}
+        opts.Body = encode(body)
+    end
+    local ok, res = pcall(req, opts)
+    if not ok or not res then return nil end
+    return res
+end
+
+local function okRes(r) return r ~= nil and (r.Success == true or r.StatusCode == 200) end
+
+local function fbGet(path)
+    local r = http("GET", path)
+    if not r or not r.Body or r.Body == "" or r.Body == "null" then return nil end
+    local ok, d = pcall(function() return HttpService:JSONDecode("[" .. r.Body .. "]")[1] end)
+    return ok and d or nil
+end
+local function fbPut(path, v) return okRes(http("PUT", path, v)) end
+local function fbPost(path, v) return okRes(http("POST", path, v)) end
+local function fbDelete(path) return okRes(http("DELETE", path)) end
+
+------------------------------------------------------------------ game remotes
+local function getRemote()
+    local r = RS:FindFirstChild("Remotes")
+    return r and r:FindFirstChild("AvatarEditorOutfitCodes")
+end
+
+local function loadOutfit(code)
+    local rem = getRemote()
+    if not rem then return false, "not in supported game" end
+    local ok, err = pcall(function() rem:InvokeServer("Load", code) end)
+    if not ok then return false, tostring(err) end
+    task.wait(0.5)
+    local ok2, exported = pcall(function() return rem:InvokeServer("Export") end)
+    if ok2 and exported == code then return true end
+    return false, "verify failed"
+end
+
+task.spawn(function()
+    pcall(function()
+        local RE = RS:FindFirstChild("RE")
+        local nameR = RE and RE:FindFirstChild("1RPNam1eTex1t")
+        local colorR = RE and RE:FindFirstChild("1RPNam1eColo1r")
+        local disp = smallCaps(LP.DisplayName)
+        if nameR then
+            nameR:FireServer("RolePlayName", "_ᴠÆʟᴏʀ ᴄᴀᴛᴀʟᴏɢ_")
+            nameR:FireServer("RolePlayBio", "  _" .. disp .. "_")
+        end
+        if colorR then
+            colorR:FireServer("PickingRPNameColor", Color3.fromRGB(0, 0, 139))
+            colorR:FireServer("PickingRPBioColor", Color3.fromRGB(255, 0, 193))
+        end
+    end)
+end)
+
+------------------------------------------------------------------ ui helpers
+local C = {
+    Base = Color3.fromRGB(255, 255, 255), Panel = Color3.fromRGB(240, 248, 255),
+    Card = Color3.fromRGB(200, 230, 250), CardHover = Color3.fromRGB(170, 215, 245),
+    Neon = Color3.fromRGB(90, 175, 255), Neon2 = Color3.fromRGB(140, 200, 255),
+    Text = Color3.fromRGB(30, 60, 100), Dim = Color3.fromRGB(120, 150, 190),
+    Success = Color3.fromRGB(70, 200, 130), Danger = Color3.fromRGB(255, 90, 110),
+    Warning = Color3.fromRGB(255, 180, 70), White = Color3.new(1, 1, 1),
+}
+local GB, GBL, GM, LUCK = Enum.Font.GothamBold, Enum.Font.GothamBlack, Enum.Font.GothamMedium, Enum.Font.LuckiestGuy
+local BACK = Enum.EasingStyle.Back
+
+local function make(class, props, parent)
+    local o = Instance.new(class)
+    for k, v in pairs(props) do o[k] = v end
+    o.Parent = parent
+    return o
+end
+local function corner(o, r) return make("UICorner", {CornerRadius = UDim.new(0, r or 10)}, o) end
+local function stroke(o, col, th, tr) return make("UIStroke", {Color = col or C.Neon, Thickness = th or 1, Transparency = tr or 0.6}, o) end
+local function grad(o, a, b, rot) return make("UIGradient", {Color = ColorSequence.new(a, b), Rotation = rot or 90}, o) end
+local function tw(o, t, props, style, dir)
+    local tween = TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), props)
+    tween:Play()
+    return tween
+end
+local function label(parent, text, pos, size, o)
+    o = o or {}
+    return make("TextLabel", {
+        Text = text, Position = pos, Size = size, BackgroundTransparency = 1,
+        TextColor3 = o.color or C.Text, Font = o.font or GB, TextSize = o.ts or 12,
+        TextXAlignment = o.xa or Enum.TextXAlignment.Center, TextWrapped = o.wrap or false,
+        TextTruncate = o.trunc or Enum.TextTruncate.None,
+    }, parent)
+end
+local function button(parent, text, pos, size, o)
+    o = o or {}
+    local b = make("TextButton", {
+        Text = text, Position = pos, Size = size, BackgroundColor3 = o.color or C.Neon,
+        BackgroundTransparency = o.bt or 0, BorderSizePixel = 0, TextColor3 = o.tc or C.White,
+        Font = o.font or GBL, TextSize = o.ts or 14, AutoButtonColor = false,
+        TextXAlignment = o.xa or Enum.TextXAlignment.Center,
+    }, parent)
+    corner(b, o.r or 12)
+    local sc = make("UIScale", {}, b)
+    b.MouseButton1Down:Connect(function() tw(sc, 0.08, {Scale = 0.95}) end)
+    b.MouseButton1Up:Connect(function() tw(sc, 0.12, {Scale = 1}) end)
+    b.MouseLeave:Connect(function() tw(sc, 0.12, {Scale = 1}) end)
+    return b
+end
+local function textbox(parent, placeholder, pos, size, font)
+    local t = make("TextBox", {
+        Position = pos, Size = size, BackgroundColor3 = C.Card, BackgroundTransparency = 0.35,
+        BorderSizePixel = 0, PlaceholderText = placeholder, PlaceholderColor3 = C.Dim,
+        Text = "", TextColor3 = C.Text, Font = font or GM, TextSize = 13,
+        ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
+    }, parent)
+    corner(t, 10)
+    make("UIPadding", {PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12)}, t)
+    return t
+end
+
+local gui = make("ScreenGui", {
+    Name = "VaelorAvatarCodes", ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    ResetOnSpawn = false, DisplayOrder = 100, IgnoreGuiInset = true,
+}, PG)
+
+local blur = Lighting:FindFirstChild("VaelorCodesBlur") or Instance.new("BlurEffect")
+blur.Name = "VaelorCodesBlur"; blur.Size = 0; blur.Parent = Lighting
+
+-- auto scale for small phone screens
+local fitters = {}
+local function fit(sc, w, h)
+    local function upd()
+        local v = Cam.ViewportSize
+        sc.Scale = math.clamp(math.min(v.X * 0.96 / w, v.Y * 0.94 / h), 0.4, 1)
+    end
+    upd()
+    table.insert(fitters, upd)
+end
+Cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+    for _, f in ipairs(fitters) do f() end
+end)
+
+-- notifications
+local notifHolder = make("Frame", {
+    AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -14),
+    Size = UDim2.fromOffset(300, 220), BackgroundTransparency = 1, ZIndex = 1000,
+}, gui)
+make("UIListLayout", {
+    SortOrder = Enum.SortOrder.LayoutOrder, VerticalAlignment = Enum.VerticalAlignment.Bottom,
+    HorizontalAlignment = Enum.HorizontalAlignment.Center, Padding = UDim.new(0, 6),
+}, notifHolder)
+local nOrder = 0
+local function notify(text, color)
+    if not alive then return end
+    color = color or C.Neon
+    nOrder += 1
+    local f = make("Frame", {Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = C.Base, BackgroundTransparency = 1, BorderSizePixel = 0, LayoutOrder = nOrder}, notifHolder)
+    corner(f, 10)
+    local s = stroke(f, color, 1.2, 1)
+    local bar = make("Frame", {Size = UDim2.new(0, 3, 1, -14), Position = UDim2.new(0, 6, 0, 7), BackgroundColor3 = color, BackgroundTransparency = 1, BorderSizePixel = 0}, f)
+    corner(bar, 2)
+    local l = label(f, text, UDim2.fromOffset(16, 0), UDim2.new(1, -20, 1, 0), {ts = 12, xa = Enum.TextXAlignment.Left, wrap = true})
+    l.TextTransparency = 1
+    tw(f, 0.2, {BackgroundTransparency = 0.05}); tw(s, 0.2, {Transparency = 0.3})
+    tw(bar, 0.2, {BackgroundTransparency = 0}); tw(l, 0.2, {TextTransparency = 0})
+    task.delay(2.6, function()
+        if f.Parent then
+            tw(f, 0.25, {BackgroundTransparency = 1}); tw(s, 0.25, {Transparency = 1})
+            tw(bar, 0.25, {BackgroundTransparency = 1}); tw(l, 0.25, {TextTransparency = 1})
+            task.wait(0.3)
+            f:Destroy()
+        end
+    end)
+end
+
+-- generic modal
+local function modal(w, h, z, accent, lock)
+    local back = make("TextButton", {
+        Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1,
+        Text = "", AutoButtonColor = false, Visible = false, ZIndex = z,
+    }, gui)
+    local card = make("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(0, 0), BackgroundColor3 = C.Base, BackgroundTransparency = 0.05,
+        BorderSizePixel = 0, ClipsDescendants = true, Active = true,
+    }, back)
+    corner(card, 16); stroke(card, accent or C.Neon, 1.4, 0.3)
+    grad(card, C.White, Color3.fromRGB(232, 245, 255), 45)
+    fit(make("UIScale", {}, card), w, h)
+    local m = {back = back, card = card, n = 0}
+    function m.open()
+        m.n += 1
+        back.Visible = true; back.BackgroundTransparency = 1
+        card.Size = UDim2.fromOffset(0, 0)
+        tw(back, 0.2, {BackgroundTransparency = 0.6})
+        tw(card, 0.3, {Size = UDim2.fromOffset(w, h)}, BACK)
+    end
+    function m.close()
+        if not back.Visible then return end
+        m.n += 1
+        local my = m.n
+        tw(back, 0.2, {BackgroundTransparency = 1})
+        tw(card, 0.2, {Size = UDim2.fromOffset(0, 0)})
+        task.delay(0.22, function() if m.n == my then back.Visible = false end end)
+    end
+    if not lock then back.Activated:Connect(m.close) end
+    return m
+end
+
+------------------------------------------------------------------ state / data
+local TTL = 30
+local codes, codesT = {}, 0
+local savedSet, savedT = {}, 0
+local viewsMap, viewsT = {}, 0
+local seenView = {}
+local scriptViews = 0
+local avatarCache = {}
+local sel = nil
+local mode = "All"
+local rows = {}
+local renderToken = 0
+local lastShare = 0
+
+local function fetchCodes(force)
+    if not force and #codes > 0 and os.time() - codesT < TTL then return codes end
+    local data = fbGet("avatarcodes") or {}
+    local out, now = {}, os.time()
+    for k, v in pairs(data) do
+        if type(v) == "table" and v.timestamp and now - v.timestamp <= 2592000 then
+            v.id = k
+            v.code = v.Code or v.code
+            table.insert(out, v)
+        end
+    end
+    codes, codesT = out, now
+    return out
+end
+
+local function fetchSaved(force)
+    if not force and os.time() - savedT < TTL then return savedSet end
+    local data = fbGet("savedcodes/" .. LP.UserId) or {}
+    local out = {}
+    for k in pairs(data) do out[k] = true end
+    savedSet, savedT = out, os.time()
+    return out
+end
+
+local function fetchViews(force)
+    if not force and next(viewsMap) ~= nil and os.time() - viewsT < TTL then return viewsMap end
+    local data = fbGet("outfit_views") or {}
+    local out = {}
+    for k, v in pairs(data) do if type(v) == "number" then out[k] = v end end
+    viewsMap, viewsT = out, os.time()
+    return out
+end
+
+local function recordView(id)
+    if seenView[id] then return viewsMap[id] or 0 end
+    seenView[id] = true
+    local n = fbGet("outfit_views/" .. id)
+    n = (type(n) == "number" and n or 0) + 1
+    fbPut("outfit_views/" .. id, n)
+    viewsMap[id] = n
+    return n
+end
+
+local function getAvatar(id)
+    if avatarCache[id] then return avatarCache[id] end
+    local ok, img = pcall(function()
+        return Players:GetUserThumbnailAsync(id, Enum.ThumbnailType.AvatarBust, Enum.ThumbnailSize.Size420x420)
+    end)
+    if ok and img then avatarCache[id] = img return img end
+end
+
+------------------------------------------------------------------ toggle button (draggable)
+local toggle = make("TextButton", {
+    Name = "ToggleButton", BackgroundColor3 = C.Neon, BackgroundTransparency = 0,
+    BorderSizePixel = 0, Position = UDim2.new(0, 20, 0, 120), Size = UDim2.fromOffset(56, 56),
+    Text = "𝗩𝗫", TextColor3 = C.White, Font = GBL, TextSize = 22,
+    AutoButtonColor = false, ZIndex = 20,
+}, gui)
+corner(toggle, 28)
+local glow = stroke(toggle, C.Neon2, 4, 0.5)
+task.spawn(function()
+    while alive and glow.Parent do
+        tw(glow, 1.5, {Transparency = 0.9}, Enum.EasingStyle.Sine); task.wait(1.5)
+        tw(glow, 1.5, {Transparency = 0.4}, Enum.EasingStyle.Sine); task.wait(1.5)
+    end
+end)
+
+local dragging, moved, dragStart, startPos = false, false, nil, nil
+toggle.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        dragging, moved = true, false
+        dragStart, startPos = i.Position, toggle.Position
+        i.Changed:Connect(function()
+            if i.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
+    end
+end)
+UIS.InputChanged:Connect(function(i)
+    if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+        local d = i.Position - dragStart
+        if d.Magnitude > 8 then moved = true end
+        if moved then
+            toggle.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end
+end)
+------------------------------------------------------------------ main window
+local W, H = 640, 380
+local win = make("Frame", {
+    Name = "Window", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+    Size = UDim2.fromOffset(0, 0), BackgroundColor3 = C.Base, BackgroundTransparency = 0.25,
+    BorderSizePixel = 0, Visible = false, ClipsDescendants = true, ZIndex = 5,
+}, gui)
+corner(win, 22); stroke(win, C.Neon, 1.2, 0.5); grad(win, C.White, Color3.fromRGB(225, 240, 255), 45)
+fit(make("UIScale", {}, win), W, H)
+
+local minBtn = button(win, "—", UDim2.new(1, -72, 0, 6), UDim2.fromOffset(30, 30), {color = C.Base, bt = 1, tc = C.Neon, ts = 18, font = GB, r = 12})
+local closeBtn = button(win, "X", UDim2.new(1, -38, 0, 6), UDim2.fromOffset(30, 30), {color = C.Base, bt = 1, tc = C.Danger, ts = 22, font = LUCK, r = 12})
+
+-- sidebar
+local navBtns = {}
+local function navButton(key, text, y, accentCol)
+    local b = button(win, "   " .. text, UDim2.fromOffset(14, y), UDim2.fromOffset(140, 38), {color = C.Card, bt = 0.35, tc = C.Text, ts = 13, font = GB, xa = Enum.TextXAlignment.Left, r = 11})
+    local a = make("Frame", {Name = "Accent", Size = UDim2.fromOffset(3, 18), Position = UDim2.new(0, 6, 0.5, -9), BackgroundColor3 = accentCol, BorderSizePixel = 0}, b)
+    corner(a, 2)
+    navBtns[key] = b
+    return b
+end
+navButton("All", "HOME", 40, C.Neon)
+navButton("Saved", "SAVED", 84, C.Warning)
+navButton("MyCodes", "MY CODES", 128, C.Neon2)
+local function setNav(m)
+    for k, b in pairs(navBtns) do
+        local on = (k == m)
+        b.BackgroundTransparency = on and 0.05 or 0.35
+        local a = b:FindFirstChild("Accent")
+        if a then a.Size = UDim2.fromOffset(3, on and 26 or 18) end
+    end
+end
+
+local uploadBtn = button(win, "+  UPLOAD", UDim2.fromOffset(14, 178), UDim2.fromOffset(140, 40), {color = C.Neon, bt = 0.1, ts = 14})
+local refreshBtn = button(win, "⟳  REFRESH", UDim2.fromOffset(14, 224), UDim2.fromOffset(140, 30), {color = C.Neon2, bt = 0.2, ts = 11, font = GB, r = 10})
+local shareBtn = button(win, "SHARE FIT", UDim2.fromOffset(14, 260), UDim2.fromOffset(140, 40), {color = C.Neon, bt = 0.1, ts = 14})
+local profileBtn = button(win, "PROFILE", UDim2.fromOffset(14, 306), UDim2.fromOffset(140, 40), {color = C.Neon, bt = 0.1, ts = 14})
+
+-- search + list
+local searchBox = make("TextBox", {
+    Position = UDim2.fromOffset(164, 40), Size = UDim2.fromOffset(200, 34), BackgroundColor3 = C.Card,
+    BackgroundTransparency = 0.35, BorderSizePixel = 0, PlaceholderText = "SEARCH HERE", PlaceholderColor3 = C.Dim,
+    Text = "", TextColor3 = C.Text, Font = LUCK, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false,
+}, win)
+corner(searchBox, 10)
+make("UIPadding", {PaddingLeft = UDim.new(0, 12)}, searchBox)
+local searchRefresh = button(win, "⟳", UDim2.fromOffset(370, 40), UDim2.fromOffset(34, 34), {color = C.Card, bt = 0.35, tc = C.Neon, ts = 18, font = GB, r = 10})
+
+local listFrame = make("Frame", {
+    Position = UDim2.fromOffset(164, 82), Size = UDim2.fromOffset(240, H - 90), BackgroundColor3 = C.Panel,
+    BackgroundTransparency = 0.4, BorderSizePixel = 0, ClipsDescendants = true,
+}, win)
+corner(listFrame, 18); stroke(listFrame, C.Neon, 1, 0.6)
+local list = make("ScrollingFrame", {
+    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
+    ScrollBarImageColor3 = C.Neon, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, listFrame)
+make("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6)}, list)
+make("UIPadding", {PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 12), PaddingBottom = UDim.new(0, 8)}, list)
+
+-- info card
+local card = make("Frame", {
+    Position = UDim2.fromOffset(416, 40), Size = UDim2.fromOffset(210, 200), BackgroundColor3 = C.Panel,
+    BackgroundTransparency = 0.4, BorderSizePixel = 0, ClipsDescendants = true,
+}, win)
+corner(card, 16); stroke(card, C.Neon, 1.2, 0.5)
+local infoAvatar = make("ImageLabel", {Size = UDim2.fromOffset(76, 76), Position = UDim2.new(0.5, -38, 0, 14), BackgroundColor3 = C.Card, BorderSizePixel = 0, Image = ""}, card)
+corner(infoAvatar, 38); stroke(infoAvatar, C.Neon, 2, 0.2)
+local infoBadge = make("ImageLabel", {Size = UDim2.fromOffset(36, 36), Position = UDim2.new(0.5, 14, 0, 50), BackgroundTransparency = 1, Image = "rbxassetid://92116889798388"}, card)
+task.spawn(function()
+    while alive and infoAvatar.Parent do
+        tw(infoAvatar, 2.2, {Position = UDim2.new(0.5, -38, 0, 10)}, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+        task.wait(2.2)
+        tw(infoAvatar, 2.2, {Position = UDim2.new(0.5, -38, 0, 18)}, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+        task.wait(2.2)
+    end
+end)
+local infoName = label(card, "", UDim2.fromOffset(8, 98), UDim2.new(1, -16, 0, 20), {font = GBL, ts = 15, trunc = Enum.TextTruncate.AtEnd})
+local infoRole = label(card, "", UDim2.fromOffset(8, 118), UDim2.new(1, -16, 0, 14), {font = LUCK, ts = 11, color = C.Neon})
+make("Frame", {Size = UDim2.new(1, -32, 0, 1), Position = UDim2.fromOffset(16, 140), BackgroundColor3 = C.Neon, BackgroundTransparency = 0.5, BorderSizePixel = 0}, card)
+local infoTitle = label(card, "", UDim2.fromOffset(8, 148), UDim2.new(1, -16, 0, 18), {font = LUCK, ts = 13, trunc = Enum.TextTruncate.AtEnd})
+local infoViews = label(card, "", UDim2.fromOffset(8, 168), UDim2.new(1, -16, 0, 16), {ts = 12, color = C.Dim})
+local infoVer = label(card, "", UDim2.fromOffset(8, 184), UDim2.new(1, -16, 0, 12), {font = GM, ts = 10, color = C.Dim})
+
+local applyBtn = button(win, "APPLY  FIT", UDim2.fromOffset(416, 250), UDim2.fromOffset(210, 40), {color = C.Neon, bt = 0.1, font = LUCK, ts = 16})
+local viewProfileBtn = button(win, "VIEW  PROFILE", UDim2.fromOffset(416, 296), UDim2.fromOffset(210, 40), {color = C.Card, bt = 0.2, tc = C.Text, font = LUCK, ts = 16})
+
+local function showCreator()
+    infoName.Text = Item.DisplayName
+    infoRole.Text = Item.Role; infoRole.TextColor3 = C.Neon
+    infoTitle.Text = Item.Title
+    infoViews.Text = "👁 " .. commas(scriptViews) .. " views"
+    infoVer.Text = Item.Version .. "  •  Active"
+    infoBadge.Visible = true
+    task.spawn(function()
+        local ok, id = pcall(function() return Players:GetUserIdFromNameAsync(Item.Username) end)
+        if ok and id and not sel then
+            local img = getAvatar(id)
+            if img and infoAvatar.Parent then infoAvatar.Image = img end
+        end
+    end)
+end
+
+local function showOutfit(e)
+    infoName.Text = e.uploaderDisplay or e.uploaderName or "Unknown"
+    infoRole.Text = "OUTFIT CREATOR"; infoRole.TextColor3 = C.Success
+    infoTitle.Text = e.Name or "Untitled"
+    infoViews.Text = "👁 " .. commas(viewsMap[e.id] or 0) .. " views"
+    infoVer.Text = "Uploaded  •  " .. (e.timestamp and os.date("%b %d, %Y", e.timestamp) or "Unknown")
+    infoBadge.Visible = false
+    if e.uploaderId then
+        task.spawn(function()
+            local img = getAvatar(tonumber(e.uploaderId))
+            if img and sel == e and infoAvatar.Parent then infoAvatar.Image = img end
+        end)
+    end
+end
+
+------------------------------------------------------------------ open / close window
+local isOpen = false
+local function openWin()
+    if isOpen or not alive then return end
+    isOpen = true
+    toggle.Visible = false
+    win.Visible = true
+    win.Size = UDim2.fromOffset(0, 0)
+    tw(win, 0.4, {Size = UDim2.fromOffset(W, H)}, BACK)
+    tw(blur, 0.35, {Size = 16})
+end
+local function closeWin()
+    if not isOpen then return end
+    isOpen = false
+    tw(blur, 0.3, {Size = 0})
+    tw(win, 0.3, {Size = UDim2.fromOffset(0, 0)}, BACK, Enum.EasingDirection.In)
+    task.delay(0.32, function()
+        if not isOpen then win.Visible = false end
+        toggle.Visible = true
+    end)
+end
+toggle.Activated:Connect(function() if not moved then openWin() end end)
+minBtn.Activated:Connect(closeWin)
+
+------------------------------------------------------------------ confirm close
+local CM = modal(360, 200, 500, C.Danger)
+label(CM.card, "⚠️", UDim2.fromOffset(0, 14), UDim2.new(1, 0, 0, 40), {ts = 32})
+label(CM.card, "Close the script?", UDim2.fromOffset(20, 60), UDim2.new(1, -40, 0, 26), {font = GBL, ts = 18})
+label(CM.card, "This removes the GUI completely.", UDim2.fromOffset(20, 90), UDim2.new(1, -40, 0, 30), {font = GM, ts = 12, color = C.Dim, wrap = true})
+local yesBtn = button(CM.card, "YES, CLOSE", UDim2.new(0, 20, 1, -56), UDim2.fromOffset(150, 40), {color = C.Danger, font = LUCK, ts = 14})
+local noBtn = button(CM.card, "CANCEL", UDim2.new(1, -170, 1, -56), UDim2.fromOffset(150, 40), {color = C.Neon, font = LUCK, ts = 14})
+closeBtn.Activated:Connect(CM.open)
+noBtn.Activated:Connect(CM.close)
+yesBtn.Activated:Connect(function()
+    alive = false
+    CM.close()
+    tw(blur, 0.3, {Size = 0})
+    task.delay(0.35, function()
+        pcall(function() gui:Destroy() end)
+        pcall(function() blur:Destroy() end)
+    end)
+    print("Vaelor Catalog closed")
+end)
+
+------------------------------------------------------------------ bio modal
+local BM = modal(380, 210, 420)
+label(BM.card, "EDIT YOUR BIO", UDim2.fromOffset(20, 14), UDim2.fromOffset(200, 22), {font = GBL, ts = 16, xa = Enum.TextXAlignment.Left})
+local bioCount = label(BM.card, "0/150", UDim2.new(1, -100, 0, 14), UDim2.fromOffset(80, 22), {ts = 11, color = C.Dim, xa = Enum.TextXAlignment.Right})
+local bioBox = make("TextBox", {
+    Position = UDim2.fromOffset(20, 44), Size = UDim2.new(1, -40, 0, 90), BackgroundColor3 = C.Card, BackgroundTransparency = 0.3,
+    BorderSizePixel = 0, PlaceholderText = "Write something about yourself", PlaceholderColor3 = C.Dim, Text = "",
+    TextColor3 = C.Text, Font = GM, TextSize = 12, TextWrapped = true, ClearTextOnFocus = false, MultiLine = true,
+    TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+}, BM.card)
+corner(bioBox, 10)
+make("UIPadding", {PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8)}, bioBox)
+bioBox:GetPropertyChangedSignal("Text"):Connect(function()
+    if #bioBox.Text > 150 then bioBox.Text = bioBox.Text:sub(1, 150) end
+    bioCount.Text = #bioBox.Text .. "/150"
+end)
+local bioSave = button(BM.card, "SAVE BIO", UDim2.new(0, 20, 1, -50), UDim2.fromOffset(160, 38), {font = LUCK, ts = 14})
+local bioCancel = button(BM.card, "CANCEL", UDim2.new(1, -180, 1, -50), UDim2.fromOffset(160, 38), {color = C.Card, bt = 0.2, tc = C.Text, font = LUCK, ts = 14})
+bioCancel.Activated:Connect(BM.close)
+
+------------------------------------------------------------------ profile modal
+local PM = modal(420, 520, 300)
+local pc = PM.card
+local hdr = make("Frame", {Size = UDim2.new(1, 0, 0, 100), BackgroundColor3 = C.Neon, BorderSizePixel = 0}, pc)
+corner(hdr, 16); grad(hdr, C.Neon, C.Neon2, 45)
+local pClose = button(pc, "X", UDim2.new(1, -38, 0, 8), UDim2.fromOffset(30, 30), {color = C.White, bt = 1, font = LUCK, ts = 20, r = 12})
+local pAvatar = make("ImageLabel", {Size = UDim2.fromOffset(84, 84), Position = UDim2.new(0.5, -42, 0, 56), BackgroundColor3 = C.Card, BorderSizePixel = 0, Image = ""}, pc)
+corner(pAvatar, 42); stroke(pAvatar, C.White, 3, 0.15)
+local pName = label(pc, "Name", UDim2.fromOffset(20, 146), UDim2.new(1, -40, 0, 22), {font = GBL, ts = 18, trunc = Enum.TextTruncate.AtEnd})
+local pUser = label(pc, "@username", UDim2.fromOffset(20, 168), UDim2.new(1, -40, 0, 16), {font = GM, ts = 12, color = C.Dim})
+local pBio = button(pc, "No bio yet.", UDim2.fromOffset(20, 188), UDim2.new(1, -40, 0, 36), {color = C.Panel, bt = 0.5, tc = C.Dim, font = GM, ts = 11, r = 8})
+pBio.TextWrapped = true
+local pFollow = button(pc, "FOLLOW", UDim2.new(0.5, -90, 0, 232), UDim2.fromOffset(180, 36), {font = LUCK, ts = 15})
+local stats = make("Frame", {Size = UDim2.new(1, -40, 0, 50), Position = UDim2.fromOffset(20, 276), BackgroundColor3 = C.Panel, BackgroundTransparency = 0.35, BorderSizePixel = 0}, pc)
+corner(stats, 12); stroke(stats, C.Neon, 1, 0.6)
+local function statCell(i, text)
+    local f = make("Frame", {Size = UDim2.fromScale(0.25, 1), Position = UDim2.fromScale(i * 0.25, 0), BackgroundTransparency = 1}, stats)
+    local v = label(f, "0", UDim2.fromOffset(0, 4), UDim2.new(1, 0, 0, 28), {font = GBL, ts = 16})
+    label(f, text, UDim2.fromOffset(0, 32), UDim2.new(1, 0, 0, 14), {ts = 10, color = C.Dim})
+    return v
+end
+local sPosts, sFollowers, sFollowing, sReach = statCell(0, "POSTS"), statCell(1, "FOLLOWERS"), statCell(2, "FOLLOWING"), statCell(3, "REACH")
+label(pc, "OUTFIT POSTS", UDim2.fromOffset(20, 334), UDim2.new(1, -40, 0, 16), {font = LUCK, ts = 12, color = C.Neon, xa = Enum.TextXAlignment.Left})
+local gridFrame = make("Frame", {Position = UDim2.fromOffset(20, 354), Size = UDim2.new(1, -40, 1, -362), BackgroundColor3 = C.Panel, BackgroundTransparency = 0.5, BorderSizePixel = 0, ClipsDescendants = true}, pc)
+corner(gridFrame, 12)
+local grid = make("ScrollingFrame", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.Neon, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y}, gridFrame)
+make("UIGridLayout", {CellSize = UDim2.fromOffset(108, 74), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder}, grid)
+make("UIPadding", {PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8)}, grid)
+local noPosts = label(pc, "No outfit posts yet.", UDim2.fromOffset(20, 380), UDim2.new(1, -40, 0, 30), {ts = 12, color = C.Dim})
+noPosts.Visible = false
+
+local profId, profName, profIsFollowing = nil, nil, false
+local selectEntry -- forward
+
+local function refreshFollowBtn()
+    if not profId then return end
+    if tostring(profId) == tostring(LP.UserId) then
+        pFollow.Text = "THIS IS YOU"; pFollow.BackgroundColor3 = C.Card; pFollow.TextColor3 = C.Dim
+    elseif profIsFollowing then
+        pFollow.Text = "FOLLOWING"; pFollow.BackgroundColor3 = C.Card; pFollow.TextColor3 = C.Text
+    else
+        pFollow.Text = "FOLLOW"; pFollow.BackgroundColor3 = C.Neon; pFollow.TextColor3 = C.White
+    end
+end
+
+local function loadPosts(id)
+    for _, c in ipairs(grid:GetChildren()) do if c:IsA("GuiObject") then c:Destroy() end end
+    local all, vm, mine, reach = fetchCodes(), fetchViews(), {}, 0
+    for _, e in ipairs(all) do
+        if tostring(e.uploaderId) == tostring(id) then
+            table.insert(mine, e)
+            reach += (vm[e.id] or 0)
+        end
+    end
+    if profId ~= id then return end
+    table.sort(mine, function(a, b) return (a.timestamp or 0) > (b.timestamp or 0) end)
+    sPosts.Text = commas(#mine); sReach.Text = commas(reach)
+    noPosts.Visible = (#mine == 0)
+    for i, e in ipairs(mine) do
+        local b = make("TextButton", {BackgroundColor3 = C.Card, BackgroundTransparency = 0.25, BorderSizePixel = 0, Text = "", AutoButtonColor = false, LayoutOrder = i}, grid)
+        corner(b, 10); stroke(b, C.Neon, 1, 0.7)
+        label(b, e.Name or "Untitled", UDim2.fromOffset(5, 8), UDim2.new(1, -10, 0, 20), {ts = 12, color = C.Text, trunc = Enum.TextTruncate.AtEnd})
+        label(b, "👁 " .. commas(vm[e.id] or 0), UDim2.fromOffset(5, 30), UDim2.new(1, -10, 0, 14), {font = GM, ts = 10, color = C.Dim})
+        label(b, e.timestamp and os.date("%b %d, %Y", e.timestamp) or "", UDim2.new(0, 5, 1, -18), UDim2.new(1, -10, 0, 14), {font = GM, ts = 9, color = C.Dim})
+        b.Activated:Connect(function()
+            PM.close()
+            if not isOpen then openWin() end
+            selectEntry(e)
+        end)
+    end
+end
+
+local function openProfile(id, uname, display)
+    if not alive or not id then return end
+    profId, profName, profIsFollowing = id, display or uname or "Unknown", false
+    pName.Text = profName
+    pUser.Text = "@" .. (uname or "unknown")
+    pBio.Text = "Loading bio…"; pBio.TextColor3 = C.Dim
+    pAvatar.Image = ""
+    sPosts.Text, sFollowers.Text, sFollowing.Text, sReach.Text = "...", "...", "...", "..."
+    for _, c in ipairs(grid:GetChildren()) do if c:IsA("GuiObject") then c:Destroy() end end
+    noPosts.Visible = false
+    refreshFollowBtn()
+    PM.open()
+    task.spawn(function() local img = getAvatar(id) if img and profId == id then pAvatar.Image = img end end)
+    task.spawn(function()
+        local b = fbGet("social_bios/" .. id)
+        if profId ~= id then return end
+        local own = tostring(id) == tostring(LP.UserId)
+        if type(b) ~= "string" or b == "" then
+            pBio.Text = own and "No bio yet. Tap to add one!" or "No bio yet."
+            pBio.TextColor3 = C.Dim
+        else
+            pBio.Text = b; pBio.TextColor3 = C.Text
+        end
+    end)
+    task.spawn(function() local n = countKeys(fbGet("social_followers/" .. id)) if profId == id then sFollowers.Text = commas(n) end end)
+    task.spawn(function() local n = countKeys(fbGet("social_follows/" .. id)) if profId == id then sFollowing.Text = commas(n) end end)
+    task.spawn(function() loadPosts(id) end)
+    task.spawn(function()
+        local f = fbGet("social_follows/" .. LP.UserId .. "/" .. id) == true
+        if profId == id then profIsFollowing = f; refreshFollowBtn() end
+    end)
+end
+
+pClose.Activated:Connect(function() profId = nil; PM.close() end)
+PM.back.Activated:Connect(function() profId = nil end)
+
+pFollow.Activated:Connect(function()
+    if not profId or tostring(profId) == tostring(LP.UserId) then return end
+    local id = profId
+    if profIsFollowing then
+        fbDelete("social_follows/" .. LP.UserId .. "/" .. id)
+        fbDelete("social_followers/" .. id .. "/" .. LP.UserId)
+        profIsFollowing = false
+        notify("UNFOLLOWED", C.Warning)
+    else
+        fbPut("social_follows/" .. LP.UserId .. "/" .. id, true)
+        fbPut("social_followers/" .. id .. "/" .. LP.UserId, true)
+        profIsFollowing = true
+        notify("FOLLOWING " .. tostring(profName), C.Success)
+    end
+    refreshFollowBtn()
+    task.spawn(function() local n = countKeys(fbGet("social_followers/" .. id)) if profId == id then sFollowers.Text = commas(n) end end)
+end)
+
+pBio.Activated:Connect(function()
+    if not profId then return end
+    if tostring(profId) ~= tostring(LP.UserId) then
+        notify("YOU CAN ONLY EDIT YOUR OWN BIO", C.Warning)
+        return
+    end
+    local b = fbGet("social_bios/" .. LP.UserId)
+    bioBox.Text = type(b) == "string" and b or ""
+    bioCount.Text = #bioBox.Text .. "/150"
+    BM.open()
+end)
+
+bioSave.Activated:Connect(function()
+    local text = trim(bioBox.Text)
+    fbPut("social_bios/" .. LP.UserId, text)
+    pBio.Text = #text > 0 and text or "No bio yet. Tap to add one!"
+    pBio.TextColor3 = #text > 0 and C.Text or C.Dim
+    notify("BIO SAVED!", C.Success)
+    BM.close()
+end)
+
+profileBtn.Activated:Connect(function() openProfile(LP.UserId, LP.Name, LP.DisplayName) end)
+viewProfileBtn.Activated:Connect(function()
+    if not sel then notify("SELECT A CODE FIRST", C.Warning) return end
+    if not sel.uploaderId then notify("UPLOADER UNKNOWN", C.Danger) return end
+    openProfile(tonumber(sel.uploaderId), sel.uploaderName or "unknown", sel.uploaderDisplay or sel.uploaderName or "Unknown")
+end)
+
+------------------------------------------------------------------ code list
+local renderCodes
+
+local function rowInfo(e)
+    return "by " .. (e.uploaderDisplay or e.uploaderName or "Unknown") .. "  •  👁 " .. commas(viewsMap[e.id] or 0) .. "  •  " .. (e.timestamp and os.date("%b %d", e.timestamp) or "?")
+end
+
+function selectEntry(e)
+    sel = e
+    for id, f in pairs(rows) do
+        tw(f, 0.15, {BackgroundColor3 = (id == e.id) and C.CardHover or C.Card})
+    end
+    showOutfit(e)
+    task.spawn(function()
+        recordView(e.id)
+        if sel == e then showOutfit(e) end
+        local f = rows[e.id]
+        local l = f and f:FindFirstChild("Info")
+        if l then l.Text = rowInfo(e) end
+    end)
+end
+
+local function addRow(e, order)
+    local f = make("Frame", {Name = "Row_" .. e.id, Size = UDim2.new(1, -6, 0, 60), BackgroundColor3 = C.Card, BackgroundTransparency = 0.3, BorderSizePixel = 0, LayoutOrder = order}, list)
+    corner(f, 10)
+    rows[e.id] = f
+    local nameBtn = make("TextButton", {
+        Size = UDim2.new(1, -84, 0, 34), Position = UDim2.fromOffset(0, 4), BackgroundTransparency = 1,
+        Text = (e.trending and " 🔥 " or "  ") .. (e.Name or "Untitled"), TextColor3 = C.Text, Font = GB, TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+    }, f)
+    local info = label(f, rowInfo(e), UDim2.new(0, 8, 1, -24), UDim2.new(1, -12, 0, 20), {font = GM, ts = 10, color = C.Dim, xa = Enum.TextXAlignment.Left, trunc = Enum.TextTruncate.AtEnd})
+    info.Name = "Info"
+    nameBtn.Activated:Connect(function() selectEntry(e) end)
+
+    local copyB = button(f, "📋", UDim2.new(1, -78, 0, 6), UDim2.fromOffset(24, 26), {color = C.Card, bt = 1, tc = C.Neon, ts = 14, font = GB, r = 6})
+    copyB.Activated:Connect(function()
+        if copyFn then pcall(copyFn, e.code or "") notify("CODE COPIED!", C.Success)
+        else notify("CLIPBOARD NOT SUPPORTED", C.Danger) end
+    end)
+
+    local star = button(f, savedSet[e.id] and "★" or "☆", UDim2.new(1, -52, 0, 6), UDim2.fromOffset(24, 26), {color = C.Card, bt = 1, tc = C.Warning, ts = 18, font = GB, r = 6})
+    star.Activated:Connect(function()
+        if savedSet[e.id] then
+            fbDelete("savedcodes/" .. LP.UserId .. "/" .. e.id)
+            savedSet[e.id] = nil
+            star.Text = "☆"
+            notify("REMOVED FROM SAVED", C.Warning)
+        else
+            fbPut("savedcodes/" .. LP.UserId .. "/" .. e.id, true)
+            savedSet[e.id] = true
+            star.Text = "★"
+            notify("SAVED!", C.Warning)
+        end
+    end)
+
+    if tostring(e.uploaderId) == tostring(LP.UserId) then
+        local del = button(f, "X", UDim2.new(1, -26, 0, 6), UDim2.fromOffset(24, 26), {color = C.Card, bt = 1, tc = C.Danger, ts = 14, font = GB, r = 6})
+        del.Activated:Connect(function()
+            fbDelete("avatarcodes/" .. e.id)
+            if sel == e then sel = nil; showCreator() end
+            rows[e.id] = nil
+            f:Destroy()
+            codesT = 0
+            notify("CODE DELETED", C.Danger)
+        end)
+    end
+end
+
+function renderCodes(m, force)
+    renderToken += 1
+    local my = renderToken
+    mode = m or mode
+    setNav(mode)
+    for _, c in ipairs(list:GetChildren()) do if c:IsA("GuiObject") then c:Destroy() end end
+    rows = {}
+    sel = nil
+    showCreator()
+    local loading = label(list, "Loading…", UDim2.new(), UDim2.new(1, -6, 0, 40), {ts = 12, color = C.Dim})
+
+    local saved = fetchSaved(force)
+    local all = fetchCodes(force)
+    local vm = fetchViews(force)
+    if my ~= renderToken or not alive then return end
+    loading:Destroy()
+
+    local data = {}
+    for _, e in ipairs(all) do e.trending = false; table.insert(data, e) end
+    table.sort(data, function(a, b)
+        local va, vb = vm[a.id] or 0, vm[b.id] or 0
+        if va ~= vb then return va > vb end
+        return (a.timestamp or 0) > (b.timestamp or 0)
+    end)
+    local t = 0
+    for _, e in ipairs(data) do
+        if t < 3 and (vm[e.id] or 0) > 0 then e.trending = true; t += 1 end
+    end
+
+    local q = searchBox.Text:lower()
+    local shown = 0
+    for _, e in ipairs(data) do
+        local ok = true
+        if mode == "MyCodes" and tostring(e.uploaderId) ~= tostring(LP.UserId) then ok = false end
+        if mode == "Saved" and not saved[e.id] then ok = false end
+        if #q > 0 and not (e.Name or ""):lower():find(q, 1, true) then ok = false end
+        if ok then
+            shown += 1
+            addRow(e, shown)
+        end
+    end
+    if shown == 0 then
+        local l = label(list, "No codes yet.\nUpload one to start!", UDim2.new(), UDim2.new(1, -6, 0, 60), {ts = 12, color = C.Dim, wrap = true})
+        l.LayoutOrder = 1
+    end
+end
+
+navBtns.All.Activated:Connect(function() renderCodes("All") end)
+navBtns.Saved.Activated:Connect(function() renderCodes("Saved") end)
+navBtns.MyCodes.Activated:Connect(function() renderCodes("MyCodes") end)
+
+local function hardRefresh()
+    codesT, savedT, viewsT = 0, 0, 0
+    renderCodes(mode, true)
+    notify("REFRESHED", C.Neon)
+end
+refreshBtn.Activated:Connect(hardRefresh)
+searchRefresh.Activated:Connect(hardRefresh)
+
+local searchTok = 0
+searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    searchTok += 1
+    local my = searchTok
+    task.delay(0.35, function()
+        if my == searchTok and isOpen and alive then renderCodes(mode) end
+    end)
+end)
+
+applyBtn.Activated:Connect(function()
+    if not sel then notify("SELECT A CODE FIRST", C.Warning) return end
+    if not getRemote() then notify("NOT IN A SUPPORTED GAME", C.Danger) return end
+    notify("APPLYING…", C.Neon)
+    task.spawn(function()
+        local ok, err = loadOutfit(sel.code)
+        if ok then notify("FIT APPLIED!", C.Success)
+        else notify("FAILED: " .. tostring(err), C.Danger) end
+    end)
+end)
+
+------------------------------------------------------------------ upload modal
+local UM = modal(360, 230, 50)
+label(UM.card, "UPLOAD OUTFIT CODE", UDim2.fromOffset(20, 12), UDim2.new(1, -150, 0, 22), {font = GBL, ts = 15, xa = Enum.TextXAlignment.Left})
+local upCount = label(UM.card, "0/10 today", UDim2.new(1, -130, 0, 12), UDim2.fromOffset(110, 22), {ts = 12, color = C.Success, xa = Enum.TextXAlignment.Right})
+label(UM.card, "Codes must start with BH-AE-", UDim2.fromOffset(20, 34), UDim2.new(1, -40, 0, 14), {font = GM, ts = 11, color = C.Dim, xa = Enum.TextXAlignment.Left})
+local upName = textbox(UM.card, "Outfit name (max 15)", UDim2.fromOffset(20, 58), UDim2.new(1, -40, 0, 36))
+local upCode = textbox(UM.card, "BH-AE-xxxxxxxxxxxxxxxx", UDim2.fromOffset(20, 102), UDim2.new(1, -40, 0, 36), Enum.Font.Code)
+upName:GetPropertyChangedSignal("Text"):Connect(function()
+    if #upName.Text > 15 then upName.Text = upName.Text:sub(1, 15) end
+end)
+local pubBtn = button(UM.card, "PUBLISH", UDim2.new(0, 20, 1, -54), UDim2.new(1, -150, 0, 38), {color = C.Neon, bt = 0.1})
+local upCancel = button(UM.card, "CANCEL", UDim2.new(1, -120, 1, -54), UDim2.fromOffset(100, 38), {color = C.Card, bt = 0.3, tc = C.Text, ts = 12, font = GB})
+upCancel.Activated:Connect(UM.close)
+
+local function uploadCount()
+    local d = fbGet("upload_limits/" .. LP.UserId)
+    if type(d) == "table" and d.date == today() then return tonumber(d.count) or 0 end
+    return 0
+end
+local function updateUpCount()
+    local n = uploadCount()
+    upCount.Text = n .. "/10 today"
+    upCount.TextColor3 = n >= 10 and C.Danger or (n >= 7 and C.Warning or C.Success)
+end
+uploadBtn.Activated:Connect(function()
+    upName.Text, upCode.Text = "", ""
+    UM.open()
+    task.spawn(updateUpCount)
+end)
+
+local pubBusy = false
+pubBtn.Activated:Connect(function()
+    if pubBusy then return end
+    local name, code = trim(upName.Text), trim(upCode.Text)
+    if #name < 2 then notify("PLEASE ENTER A NAME", C.Danger) return end
+    if not code:match("^BH%-AE%-") then notify("PLEASE PUT LEGIT CODE", C.Danger) return end
+    pubBusy = true
+    pubBtn.Text = "UPLOADING..."
+    task.spawn(function()
+        local n = uploadCount()
+        if n >= 10 then
+            notify("DAILY LIMIT REACHED (10/day)", C.Danger)
+        else
+            local ok = fbPost("avatarcodes", {
+                Name = name, Code = code, uploaderId = LP.UserId, uploaderName = LP.Name,
+                uploaderDisplay = LP.DisplayName, timestamp = os.time(),
+            })
+            if ok then
+                fbPut("upload_limits/" .. LP.UserId, {date = today(), count = n + 1})
+                notify("UPLOAD SUCCESS! (" .. (n + 1) .. "/10 today)", C.Success)
+                UM.close()
+                codesT = 0
+                renderCodes(mode, true)
+            else
+                notify("UPLOAD FAILED", C.Danger)
+            end
+        end
+        pubBusy = false
+        pubBtn.Text = "PUBLISH"
+    end)
+end)
+
+------------------------------------------------------------------ share modal
+local SM = modal(400, 340, 200)
+local target = nil
+button(SM.card, "X", UDim2.new(1, -38, 0, 6), UDim2.fromOffset(30, 30), {color = C.Card, bt = 1, tc = C.Danger, font = LUCK, ts = 16, r = 12}).Activated:Connect(SM.close)
+label(SM.card, "1.  SELECT A FRIEND", UDim2.fromOffset(16, 14), UDim2.new(1, -32, 0, 14), {font = LUCK, ts = 12, color = C.Neon, xa = Enum.TextXAlignment.Left})
+local fWrap = make("Frame", {Size = UDim2.new(1, -32, 0, 108), Position = UDim2.fromOffset(16, 34), BackgroundColor3 = C.Panel, BackgroundTransparency = 0.55, BorderSizePixel = 0, ClipsDescendants = true}, SM.card)
+corner(fWrap, 12)
+local fList = make("ScrollingFrame", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.Neon, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y}, fWrap)
+make("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4)}, fList)
+make("UIPadding", {PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 10), PaddingBottom = UDim.new(0, 6)}, fList)
+label(SM.card, "2.  PASTE OUTFIT CODE", UDim2.fromOffset(16, 150), UDim2.new(1, -32, 0, 14), {font = LUCK, ts = 12, color = C.Neon, xa = Enum.TextXAlignment.Left})
+local shCode = textbox(SM.card, "BH-AE-xxxxxxxxxxxxxxxx", UDim2.fromOffset(16, 168), UDim2.new(1, -32, 0, 34), Enum.Font.Code)
+label(SM.card, "3.  NAME (OPTIONAL)", UDim2.fromOffset(16, 208), UDim2.new(1, -32, 0, 14), {font = LUCK, ts = 12, color = C.Neon, xa = Enum.TextXAlignment.Left})
+local shName = textbox(SM.card, "e.g. Summer Fit", UDim2.fromOffset(16, 226), UDim2.new(1, -32, 0, 34))
+local sendBtn = button(SM.card, "SEND OUTFIT", UDim2.new(0, 16, 1, -54), UDim2.new(1, -150, 0, 40), {font = LUCK, ts = 15})
+local shCancel = button(SM.card, "CANCEL", UDim2.new(1, -120, 1, -54), UDim2.fromOffset(104, 40), {color = C.Card, bt = 0.25, tc = C.Text, font = LUCK, ts = 14})
+shCancel.Activated:Connect(SM.close)
+
+local function buildFriends()
+    for _, c in ipairs(fList:GetChildren()) do if c:IsA("GuiObject") then c:Destroy() end end
+    local n = 0
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LP then
+            n += 1
+            local b = make("TextButton", {Size = UDim2.new(1, -6, 0, 44), BackgroundColor3 = C.Card, BackgroundTransparency = 0.35, BorderSizePixel = 0, Text = "", AutoButtonColor = false, LayoutOrder = n}, fList)
+            b.Name = "Friend"
+            corner(b, 10)
+            local img = make("ImageLabel", {Size = UDim2.fromOffset(34, 34), Position = UDim2.new(0, 6, 0.5, -17), BackgroundColor3 = C.Card, BorderSizePixel = 0, Image = ""}, b)
+            corner(img, 17)
+            task.spawn(function()
+                pcall(function()
+                    local t = Players:GetUserThumbnailAsync(p.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+                    if img.Parent then img.Image = t end
+                end)
+            end)
+            label(b, p.DisplayName, UDim2.fromOffset(48, 5), UDim2.new(1, -80, 0, 18), {ts = 12, xa = Enum.TextXAlignment.Left, trunc = Enum.TextTruncate.AtEnd})
+            label(b, "@" .. p.Name, UDim2.fromOffset(48, 22), UDim2.new(1, -80, 0, 14), {font = GM, ts = 10, color = C.Dim, xa = Enum.TextXAlignment.Left, trunc = Enum.TextTruncate.AtEnd})
+            local check = label(b, "✓", UDim2.new(1, -28, 0.5, -11), UDim2.fromOffset(22, 22), {ts = 16, color = C.Success})
+            check.Name = "Check"; check.Visible = false
+            b.Activated:Connect(function()
+                for _, o in ipairs(fList:GetChildren()) do
+                    if o.Name == "Friend" then
+                        tw(o, 0.15, {BackgroundColor3 = C.Card})
+                        o.Check.Visible = false
+                    end
+                end
+                tw(b, 0.15, {BackgroundColor3 = C.CardHover})
+                check.Visible = true
+                target = {Name = p.Name, Display = p.DisplayName, Id = p.UserId}
+            end)
+        end
+    end
+    if n == 0 then
+        local l = label(fList, "No other players in this server.", UDim2.new(), UDim2.new(1, -6, 0, 44), {ts = 11, color = C.Dim})
+        l.LayoutOrder = 1
+    end
+end
+
+shareBtn.Activated:Connect(function()
+    target = nil
+    shCode.Text, shName.Text = "", ""
+    buildFriends()
+    SM.open()
+end)
+
+local sendBusy = false
+sendBtn.Activated:Connect(function()
+    if sendBusy then return end
+    local left = 180 - (os.time() - lastShare)
+    if lastShare > 0 and left > 0 then notify("WAIT " .. left .. "s BEFORE NEXT SHARE", C.Danger) return end
+    if not target then notify("SELECT A FRIEND FIRST", C.Warning) return end
+    local code = trim(shCode.Text)
+    local name = trim(shName.Text)
+    if not code:match("^BH%-AE%-") then notify("PLEASE PUT LEGIT CODE", C.Danger) return end
+    if name == "" then name = "Shared Outfit" end
+    sendBusy = true
+    sendBtn.Text = "SENDING..."
+    task.spawn(function()
+        local ok = fbPut("outfit_shares/" .. target.Id .. "/" .. HttpService:GenerateGUID(false), {
+            sender = LP.Name, senderDisplay = LP.DisplayName, senderId = LP.UserId,
+            outfitCode = code, outfitName = name, timestamp = os.time(),
+        })
+        if ok then
+            lastShare = os.time()
+            notify("SENT TO " .. target.Display, C.Success)
+            SM.close()
+        else
+            notify("SEND FAILED - check DB rules", C.Danger)
+        end
+        sendBusy = false
+        sendBtn.Text = "SEND OUTFIT"
+    end)
+end)
+
+task.spawn(function()
+    while alive and gui.Parent do
+        if lastShare > 0 then
+            local left = 180 - (os.time() - lastShare)
+            shareBtn.Text = left > 0 and ("SHARE (" .. left .. "s)") or "SHARE FIT"
+        end
+        task.wait(1)
+    end
+end)
+
+------------------------------------------------------------------ incoming gifts
+local GM2 = modal(420, 270, 260, C.Neon, true)
+local gc = GM2.card
+local gHead = make("Frame", {Size = UDim2.new(1, 0, 0, 48), BackgroundColor3 = C.Neon, BorderSizePixel = 0}, gc)
+corner(gHead, 16)
+label(gHead, "🎁  YOU GOT A NEW GIFT !", UDim2.fromOffset(16, 0), UDim2.new(1, -32, 1, 0), {font = LUCK, ts = 20, color = C.White, xa = Enum.TextXAlignment.Left})
+local gAvatar = make("ImageLabel", {Size = UDim2.fromOffset(64, 64), Position = UDim2.fromOffset(20, 60), BackgroundColor3 = C.Card, BorderSizePixel = 0, Image = ""}, gc)
+corner(gAvatar, 32); stroke(gAvatar, C.Neon, 2, 0.3)
+local gName = label(gc, "", UDim2.fromOffset(96, 64), UDim2.new(1, -110, 0, 22), {font = GBL, ts = 16, xa = Enum.TextXAlignment.Left, trunc = Enum.TextTruncate.AtEnd})
+local gUser = label(gc, "", UDim2.fromOffset(96, 86), UDim2.new(1, -110, 0, 14), {font = GM, ts = 11, color = C.Dim, xa = Enum.TextXAlignment.Left})
+local gBox = make("Frame", {Size = UDim2.new(1, -40, 0, 56), Position = UDim2.fromOffset(20, 138), BackgroundColor3 = C.Card, BackgroundTransparency = 0.3, BorderSizePixel = 0}, gc)
+corner(gBox, 10)
+local gOutfit = label(gBox, "", UDim2.fromOffset(10, 7), UDim2.new(1, -20, 0, 20), {ts = 13, xa = Enum.TextXAlignment.Left, trunc = Enum.TextTruncate.AtEnd})
+local gCode = label(gBox, "", UDim2.fromOffset(10, 30), UDim2.new(1, -20, 0, 18), {font = Enum.Font.Code, ts = 11, color = C.Neon, xa = Enum.TextXAlignment.Left, trunc = Enum.TextTruncate.AtEnd})
+local gAccept = button(gc, "ACCEPT", UDim2.new(0, 20, 1, -54), UDim2.fromOffset(170, 40), {color = C.Success, font = LUCK, ts = 14})
+local gReject = button(gc, "REJECT", UDim2.new(1, -190, 1, -54), UDim2.fromOffset(170, 40), {color = C.Danger, font = LUCK, ts = 14})
+
+local giftQueue, giftBusy, curKey, curGift = {}, false, nil, nil
+local seenGifts = {}
+local nextGift
+
+local function finishGift()
+    local key = curKey
+    GM2.close()
+    task.spawn(function() fbDelete("outfit_shares/" .. LP.UserId .. "/" .. key) end)
+    curKey, curGift = nil, nil
+    task.delay(0.5, function()
+        giftBusy = false
+        nextGift()
+    end)
+end
+
+function nextGift()
+    if giftBusy or #giftQueue == 0 or not alive then return end
+    giftBusy = true
+    local item = table.remove(giftQueue, 1)
+    curKey, curGift = item[1], item[2]
+    gName.Text = curGift.senderDisplay or curGift.sender or "Unknown"
+    gUser.Text = "@" .. (curGift.sender or "unknown")
+    gOutfit.Text = curGift.outfitName or "Outfit"
+    gCode.Text = curGift.outfitCode or ""
+    gAvatar.Image = ""
+    task.spawn(function()
+        pcall(function()
+            local id = curGift.senderId or Players:GetUserIdFromNameAsync(curGift.sender or "Roblox")
+            local img = Players:GetUserThumbnailAsync(id, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size180x180)
+            if gAvatar.Parent then gAvatar.Image = img end
+        end)
+    end)
+    GM2.open()
+end
+
+gAccept.Activated:Connect(function()
+    if not curGift then return end
+    local code = curGift.outfitCode
+    if code and getRemote() then
+        task.spawn(function() loadOutfit(code) end)
+    end
+    if code and copyFn then pcall(copyFn, code) end
+    notify("ACCEPTED - code copied", C.Success)
+    finishGift()
+end)
+gReject.Activated:Connect(function()
+    if not curGift then return end
+    notify("REJECTED", C.Warning)
+    finishGift()
+end)
+
+task.spawn(function()
+    while alive and gui.Parent do
+        local data = fbGet("outfit_shares/" .. LP.UserId)
+        if type(data) == "table" then
+            local now = os.time()
+            for k, g in pairs(data) do
+                if type(g) == "table" and not seenGifts[k] then
+                    seenGifts[k] = true
+                    if now - (g.timestamp or 0) <= 1800 then
+                        table.insert(giftQueue, {k, g})
+                    else
+                        fbDelete("outfit_shares/" .. LP.UserId .. "/" .. k)
+                    end
+                end
+            end
+            nextGift()
+        end
+        task.wait(5)
+    end
+end)
+
+------------------------------------------------------------------ script view counter
+task.spawn(function()
+    local v = fbGet("script_stats/views")
+    v = (type(v) == "number" and v or 0) + 1
+    fbPut("script_stats/views", v)
+    scriptViews = v
+    if not sel then infoViews.Text = "👁 " .. commas(v) .. " views" end
+end)
+
+------------------------------------------------------------------ start
+if not req then
+    notify("EXECUTOR HAS NO HTTP REQUEST FUNCTION", C.Danger)
+end
+setNav("All")
+showCreator()
+openWin()
+task.spawn(function() renderCodes("All") end)
+notify("VÆLOR CATALOG LOADED", C.Neon)
